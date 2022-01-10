@@ -5,6 +5,7 @@ a simple script to download videos from bilibili by using you-get
 '''
 
 from logging import info
+import re
 from requests.api import request
 from you_get import common
 from you_get.extractors.bilibili import Bilibili
@@ -13,7 +14,7 @@ import json
 import os
 from typing import List,Dict,Tuple
 
-out_dir = 'D:\Download\迅雷下载\雾山五行\动画'
+out_dir = ''
 cookieFile = ""
 
 def GetEspicodes(ep_id:int) -> Tuple:
@@ -46,7 +47,7 @@ def GetEspicodes(ep_id:int) -> Tuple:
                 if episode['title'].isdigit():
                     ord = '{0:0>2d}'.format(int(episode['title']))
                 else:
-                    ord = '0:0>2d'.format(ordIndex)
+                    ord = episode['title'] # '{0:0>2d}_Other'.format(ordIndex)
                 addItem['ord'] = ord
                 retList.append(addItem)
                 ordIndex += 1
@@ -77,20 +78,39 @@ def DownloadEachEspicode(comic_title:str,espicode:Dict)->None:
         headers['Referer'] = espicode['link']
     # only download mp4 type video, so fixed it
     print("Downloading %s %s %s" % (comic_title,espicode['ord'],espicode['title']))
+    # maybe the file I needed is already exist
     ext = 'mp4'
+    mergeFileName = '%s %s.%s' %(espicode['ord'],espicode['title'],ext)
+    mergeFilePath = os.path.join(out_dir,mergeFileName)
+    if os.path.exists(mergeFilePath) and os.path.isfile(mergeFilePath):
+        return
     parts = []
     bar = common.SimpleProgressBar(videoInfo['total_size'],len(videoInfo['urls']))
     bar.update()
     for i,url in enumerate(videoInfo['urls']):
         fileName = '%s %s[%02d].%s' %(espicode['ord'],espicode['title'],i,ext)
         filePath = os.path.join(out_dir,fileName)
-        bar.update_piece(i + 1)
-        parts.append(filePath)
-        common.url_save(url = url,filepath = filePath,bar = bar,is_part = True,faker = False,headers = headers)
+        # maybe the file has been downloaded bofre
+        if os.path.exists(filePath) and os.path.isfile(filePath):
+            parts.append(filePath)
+            bar.update_piece(i + 1)
+        else:
+            bar.update_piece(i + 1)
+            parts.append(filePath)
+            common.url_save(url = url,filepath = filePath,bar = bar,is_part = True,faker = False,headers = headers)
         pass
     bar.done()
     
     # waiting to merge video and audio
+    if len(parts) > 1:
+        from you_get.processor.ffmpeg import has_ffmpeg_installed
+        if has_ffmpeg_installed():
+            from you_get.processor.ffmpeg import ffmpeg_concat_av
+            ret = ffmpeg_concat_av(parts, mergeFilePath, ext)
+            if ret == 0:
+                # I need to reserve the original silent video and audio file
+                print('Merged into %s' % mergeFileName)
+        pass
 
     print()
     # common.download_urls(urls = videoInfo['urls'],title = videoInfo['title'],ext = 'mp4',\
@@ -107,6 +127,7 @@ def GetVideoInfo(espicode:Dict)->Dict:
         itags = sorted(site.dash_streams,key=lambda i: -site.dash_streams[i]['size'])
         # choose mp4 type
         itags = list(filter(lambda i:site.dash_streams[i]['container'] == 'mp4',itags))
+        stream = None
         if itags:
             format = itags[0]
             stream = site.dash_streams[itags[0]]
@@ -119,6 +140,7 @@ def GetVideoInfo(espicode:Dict)->Dict:
             total_size = stream['size']
         if 'src' in stream:
             urls = stream['src']
+
         return {
             'format' : format,
             'quality' : quality,
